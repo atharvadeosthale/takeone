@@ -245,6 +245,9 @@ export class Session {
         await locator.waitFor({ state: "attached", timeout: 500 });
         if (!wantGone) return;
       } catch (e) {
+        // A closed or crashed page never changes again, so fail now rather than at the timeout.
+        const gone = this.page.isClosed() ? "was closed" : /^[\w.]+: (Target|Page) crashed/.test((e as Error).message) ? "crashed" : null;
+        if (gone) throw new Error(`the page ${gone} during the wait (${(e as Error).message.split("\n")[0].trim()})`);
         // Several matches still means it is on the page, which is all a wait asks.
         if (/matched \d+ elements/.test((e as Error).message)) {
           if (!wantGone) return;
