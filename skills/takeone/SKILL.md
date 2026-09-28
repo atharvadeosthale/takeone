@@ -186,7 +186,7 @@ Read credentials from environment variables. Never write them into the file.
 - **Key sequences are fast in the recording.** In a rehearsal, two separate `press` calls can miss a shortcut's timing window, for example `g` then `i`. The exported scenario runs them back to back, so check with a dry run before assuming the app is broken.
 - **Page problems appear as `!` lines.** A 401 or a crash is shown as `! HTTP 401 …` in the step output. A "login page" or "not found" in an error means the URL or the authentication is wrong, not the element name.
 - **Nothing hangs.** Every command gives up with an error instead of waiting forever, so don't wrap commands in long timeouts. Named targets wait up to `browser.timeout` (15 s) for the element to appear.
-- **Two agents on one machine need separate sessions.** Set `TAKEONE_SESSION_PORT=9322` for the second one; it gets its own browser.
+- **Two agents on one machine need separate sessions.** Set `TAKEONE_SESSION_PORT=9322` for the second one; it gets its own browser, profile and journal, even in the same folder.
 - **An updated takeone doesn't reach a running session.** A session started before an update keeps running the old code. The CLI warns about this. Run `takeone session stop` to restart it.
 
 ## SDK

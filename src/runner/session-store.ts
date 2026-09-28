@@ -27,6 +27,8 @@ export interface SessionInfo {
   /** False while login setup is still running. */
   ready?: boolean;
   setupError?: string;
+  /** Why the browser did not start, left by a daemon that exited during startup. */
+  startError?: string;
   /** Build of the daemon that runs this session, to notice a session left over from an older takeone. */
   build?: string;
 }
@@ -36,10 +38,16 @@ export const DEFAULT_SESSION_PORT = 9222;
 
 /** The session's debugging port. TAKEONE_SESSION_PORT gives a second agent on the same machine its own browser. */
 export const sessionPort = () => Number(process.env.TAKEONE_SESSION_PORT || DEFAULT_SESSION_PORT);
-const profileFor = (port: number) => (port === DEFAULT_SESSION_PORT ? "/tmp/takeone-session" : `/tmp/takeone-session-${port}`);
+/**
+ * A session on another port gets its own profile and state folder (session file, journal), so a
+ * second agent in the same folder never attaches to the first one's browser. The default port
+ * keeps the paths it always had.
+ */
+export const profileFor = (port: number) => (port === DEFAULT_SESSION_PORT ? "/tmp/takeone-session" : `/tmp/takeone-session-${port}`);
+const sessionFileFor = (port: number) => (port === DEFAULT_SESSION_PORT ? DEFAULT_SESSION_FILE : `.takeone/session-${port}/session.json`);
 
 export function sessionFile(path?: string): string {
-  return resolve(path ?? process.env.TAKEONE_SESSION_FILE ?? DEFAULT_SESSION_FILE);
+  return resolve(path ?? process.env.TAKEONE_SESSION_FILE ?? sessionFileFor(sessionPort()));
 }
 
 export function readSession(path?: string): SessionInfo | null {
@@ -157,7 +165,12 @@ export async function waitForSession(pid: number, timeoutMs = 90000, path?: stri
     try {
       process.kill(pid, 0);
     } catch {
-      throw new Error("The session daemon exited during startup. Try `takeone session start --headed`, or check that the port is free.");
+      const failed = readSession(path);
+      if (failed?.pid === pid && failed.startError) {
+        clearSession(path);
+        throw new Error(`The session browser did not start with the profile ${failed.userDataDir}: ${failed.startError}`);
+      }
+      throw new Error("The session daemon exited during startup. `takeone setup` checks that Chromium starts on this machine.");
     }
   }
   throw new Error(`Session did not become ready within ${timeoutMs / 1000}s (login setup still running?).`);

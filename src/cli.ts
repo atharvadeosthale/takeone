@@ -10,7 +10,8 @@ import { exploreScenario } from "./runner/explore.js";
 import { renderRecording } from "./compositor/render.js";
 import { chromiumInfo, launchBrowser, connectToSession } from "./browser.js";
 import {
-  DEFAULT_SESSION_PORT,
+  profileFor,
+  sessionPort,
   clearSession,
   readSession,
   sessionAlive,
@@ -99,8 +100,8 @@ sessionCmd
   .description("Launch the session browser and log in once (spawns a detached daemon)")
   .option("--scenario <file>", "reuse this scenario's config and explore.setup for login")
   .option("--url <url>", "page to open after setup")
-  .option("--port <n>", "CDP debug port (or TAKEONE_SESSION_PORT)", String(process.env.TAKEONE_SESSION_PORT || DEFAULT_SESSION_PORT))
-  .option("--profile <dir>", "persistent Chromium user data dir", "/tmp/takeone-session")
+  .option("--port <n>", "CDP debug port (or TAKEONE_SESSION_PORT)", String(sessionPort()))
+  .option("--profile <dir>", "persistent Chromium user data dir", profileFor(sessionPort()))
   .option("--headed", "show the browser window")
   .action(async (o) => {
     const existing = readSession();
@@ -587,7 +588,7 @@ WHEN SOMETHING FAILS
 MCP
   \`takeone mcp\` serves all of this as MCP tools (takeone_do, takeone_look, takeone_export, takeone_dry_run, takeone_record, …).
   Each reply carries the screenshot itself, so one call acts and shows the page.
-  TAKEONE_SESSION_PORT=9322 gives a second agent on the same machine its own browser.
+  TAKEONE_SESSION_PORT=9322 gives a second agent on the same machine its own browser, profile and journal.
 
 THE LOOK (after the export works)
   Edit the exported file's config: viewport/deviceScaleFactor (capture), output (video size,

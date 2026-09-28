@@ -43,7 +43,6 @@ function arg(name: string): string | undefined {
 }
 
 const port = Number(arg("port") ?? 9222);
-const controlPort = port + 1;
 const userDataDir = arg("user-data-dir") ?? "/tmp/takeone-session";
 const sessionPath = arg("session")!;
 const setupFile = arg("setup");
@@ -69,6 +68,12 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     "--disable-smooth-scrolling",
     ...(cfg.browser.args ?? []),
   ],
+}).catch((e: Error) => {
+  // Nobody sees this process's output, so the command waiting for the session reads the reason
+  // from the session file. A profile another browser has open is the usual one.
+  const reason = e.message.split("\n")[0].replace(/^[\w.]+: /, "");
+  writeSession({ pid: process.pid, port, cdpUrl: `http://127.0.0.1:${port}`, userDataDir, startedAt: new Date().toISOString(), startError: reason }, sessionPath);
+  process.exit(1);
 });
 
 context.setDefaultTimeout(cfg.browser.timeout);
@@ -515,7 +520,10 @@ const server = createServer((req, res) => {
     });
   });
 });
-server.listen(controlPort, "127.0.0.1");
+// Any free port: commands find it in the session file, and port + 1 could be the debugging port
+// of a session on the next port.
+await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+const { port: controlPort } = server.address() as { port: number };
 
 publish({ url: undefined, ready: false });
 
