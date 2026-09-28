@@ -107,6 +107,27 @@ export function startSessionDaemon(opts: {
   return { pid: child.pid ?? -1 };
 }
 
+/**
+ * Stop a session daemon and wait for it to exit. The daemon closes its browser on the way out,
+ * which is when Chromium writes the profile's cookies to disk, so a session started next on the
+ * same profile finds them. A daemon still running after 15s is killed.
+ */
+export async function stopSessionDaemon(pid: number): Promise<void> {
+  // 0 and -1 would signal a whole process group, or every process.
+  if (!(pid > 0)) return;
+  const send = (signal: NodeJS.Signals | 0) => {
+    try {
+      return process.kill(pid, signal);
+    } catch {
+      return false;
+    }
+  };
+  send("SIGTERM");
+  const deadline = Date.now() + 15000;
+  while (send(0) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  if (send(0)) send("SIGKILL");
+}
+
 /** Identifies the installed daemon build. A running session with another value predates an update. */
 export function daemonBuild(): string {
   try {
@@ -175,9 +196,7 @@ export async function ensureSession(opts: { scenario?: string; url?: string; con
     return existing;
   }
   if (existing) {
-    try {
-      process.kill(existing.pid, "SIGTERM");
-    } catch {}
+    await stopSessionDaemon(existing.pid);
     clearSession();
   }
   opts.log?.(`Starting a browser session${opts.scenario ? ` (logging in via ${opts.scenario})` : ""}…`);

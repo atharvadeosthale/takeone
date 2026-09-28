@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { resolve, basename, dirname, relative, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { clearSession, ensureSession, readSession, sendCommand, sessionAlive, type CommandReply, type SessionInfo } from "./runner/session-store.js";
+import { clearSession, ensureSession, readSession, sendCommand, sessionAlive, stopSessionDaemon, type CommandReply, type SessionInfo } from "./runner/session-store.js";
 import type { UserScenarioConfig } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -166,9 +166,7 @@ async function session(opts: { scenario?: string; url?: string; config?: UserSce
 async function stopSession(): Promise<boolean> {
   const info = readSession();
   if (!info) return false;
-  try {
-    process.kill(info.pid, "SIGTERM");
-  } catch {}
+  await stopSessionDaemon(info.pid);
   clearSession();
   if (info.pid === startedPid) startedPid = undefined;
   return true;

@@ -63,6 +63,10 @@ const context = await chromium.launchPersistentContext(userDataDir, {
   timezoneId: cfg.browser.timezoneId,
   colorScheme: cfg.browser.colorScheme,
   ignoreHTTPSErrors: true,
+  // shutdown() closes the browser. Playwright's own signal handlers would close it at the same
+  // time, and a second close kills Chromium before it has written cookies to disk.
+  handleSIGINT: false,
+  handleSIGTERM: false,
   args: [
     `--remote-debugging-port=${port}`,
     "--hide-scrollbars",
@@ -74,6 +78,12 @@ const context = await chromium.launchPersistentContext(userDataDir, {
 context.setDefaultTimeout(cfg.browser.timeout);
 await context.addInitScript(NAME_HELPER_SCRIPT);
 if (cfg.browser.sameTabLinks) await context.addInitScript(SAME_TAB_SCRIPT);
+// Session cookies (no expiry) end with the browser, and many apps keep their login in one.
+// shutdown() saves them in the profile, so the next session on it is still logged in.
+const sessionCookies = join(userDataDir, "takeone-session-cookies.json");
+try {
+  if (existsSync(sessionCookies)) await context.addCookies(JSON.parse(readFileSync(sessionCookies, "utf8")));
+} catch {}
 const page = context.pages()[0] ?? (await context.newPage());
 
 // ---------------------------------------------------------------------------
@@ -534,11 +544,19 @@ try {
 }
 publish({ ready: true, setupError });
 
-// Stay alive until asked to stop.
+// Stay alive until asked to stop. Chromium writes the profile's cookies to disk as the context
+// closes. A browser that has not closed after 10s is killed when this process exits.
 const shutdown = async () => {
   server.close();
   views.cleanup();
-  await context.close().catch(() => {});
+  const close = async () => {
+    try {
+      const cookies = await context.cookies();
+      writeFileSync(sessionCookies, JSON.stringify(cookies.filter((c) => c.expires === -1)), { mode: 0o600 });
+    } catch {}
+    await context.close().catch(() => {});
+  };
+  await Promise.race([close(), new Promise((r) => setTimeout(r, 10000))]);
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);

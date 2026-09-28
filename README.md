@@ -163,6 +163,8 @@ export default withExplore(defineScenario({ name: "login" }, async () => {}), {
 
 Start the rehearsal with it: `npx takeone do goto http://localhost:3000 --scenario login.ts`. The session logs in once. Scenarios exported from that session run the same login before they record.
 
+Stopping the session with `npx takeone session stop` keeps its cookies, session cookies included, so the next session on the same profile is still logged in.
+
 `npx takeone login --url https://app.example.com -o state.json` saves a real login from a visible browser instead, so it needs a display. Point `browser.storageState` at the file.
 
 ## How it works

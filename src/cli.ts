@@ -15,6 +15,7 @@ import {
   readSession,
   sessionAlive,
   startSessionDaemon,
+  stopSessionDaemon,
   waitForSession,
   ensureSession,
   sendCommand,
@@ -141,9 +142,7 @@ sessionCmd
   .action(async () => {
     const info = readSession();
     if (!info) return console.log(JSON.stringify({ status: "none" }, null, 2));
-    try {
-      process.kill(info.pid, "SIGTERM");
-    } catch {}
+    await stopSessionDaemon(info.pid);
     clearSession();
     console.log(JSON.stringify({ status: "stopped", pid: info.pid }, null, 2));
   });

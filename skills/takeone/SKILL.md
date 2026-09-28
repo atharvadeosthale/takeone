@@ -170,6 +170,8 @@ export default withExplore(defineScenario({ name: "login" }, async () => {}), {
 
 Read credentials from environment variables. Never write them into the file.
 
+`session stop` keeps the session's cookies, session cookies included, so a session started again on the same profile is still logged in.
+
 `browser.colorScheme: "dark"` only sets the browser's dark-mode preference, which the page sees through `prefers-color-scheme`. If the app keeps its own theme setting, set it in the setup, as above.
 
 ## Making it look good
