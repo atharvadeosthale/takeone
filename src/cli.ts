@@ -2,8 +2,9 @@
 import { Command } from "commander";
 import { basename, join, resolve } from "node:path";
 import { createRequire } from "node:module";
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, relative } from "node:path";
+import type { BrowserContext, Page } from "playwright";
 import { loadScenario } from "./load-scenario.js";
 import { recordScenario, dryRunScenario } from "./runner/index.js";
 import { exploreScenario } from "./runner/explore.js";
@@ -408,23 +409,80 @@ sharedOpts(
   if (res.error) process.exitCode = 1;
 });
 
+/**
+ * Wait until the login is over: Enter on stdin, a page URL matching `url`, the last window
+ * closing, or `timeoutSec` passing. A closed window is caught when its last page closes, while
+ * the context is still alive.
+ */
+function loginEnded(context: BrowserContext, url?: RegExp, timeoutSec?: number) {
+  return new Promise<{ how: "enter" | "url" | "closed" | "timeout"; page?: Page }>((r) => {
+    process.stdin.once("data", () => r({ how: "enter" }));
+    if (timeoutSec) setTimeout(() => r({ how: "timeout" }), timeoutSec * 1000);
+    const watch = (page: Page) => {
+      page.on("close", () => {
+        if (!context.pages().length) r({ how: "closed" });
+      });
+      if (!url) return;
+      page.on("framenavigated", (f) => {
+        if (f === page.mainFrame() && url.test(f.url())) r({ how: "url", page });
+      });
+      if (url.test(page.url())) r({ how: "url", page });
+    };
+    context.pages().forEach(watch);
+    context.on("page", watch);
+  });
+}
+
 program
   .command("login")
   .description("Open a visible browser so you can log in, then save cookies/localStorage/IndexedDB to a state file")
   .requiredOption("--url <url>", "page to open")
   .option("-o, --out <file>", "state file", "state.json")
+  .option("--wait-for-url <regex>", "save as soon as a page URL matches this regular expression, e.g. /dashboard. Needs no terminal")
+  .option("--timeout <seconds>", "give up with an error if the login has not finished by then (default: no limit)")
   .option("--chromium <path>", "Chromium/Chrome executable to use")
   .option("--profile <dir>", "persistent Chromium user data dir to reuse")
   .action(async (o) => {
+    const url = o.waitForUrl ? new RegExp(o.waitForUrl) : undefined;
+    const timeout = o.timeout === undefined ? undefined : Number(o.timeout);
+    if (timeout !== undefined && !(timeout > 0)) throw new Error(`--timeout takes a number of seconds, not "${o.timeout}".`);
+    const out = resolve(o.out);
     const cfg = resolveConfig({ browser: { headless: false, executablePath: o.chromium, userDataDir: o.profile } });
     const launched = await launchBrowser(cfg.browser, { width: 1280, height: 800, deviceScaleFactor: 1 }, log);
+    const fail = async (msg: string, code = 1) => {
+      log(msg);
+      await launched.close().catch(() => {});
+      process.exit(code);
+    };
+    // A normal context outlives its windows. A --profile browser does not: once its last window
+    // closes, Chromium unloads the profile (and quits on Linux and Windows), so its state can't be read.
+    const closeSaves = !o.profile;
     const page = launched.context.pages()[0] ?? (await launched.context.newPage());
     await page.goto(o.url);
-    log("Log in in the browser window, then press Enter here to save the state...");
-    await new Promise<void>((r) => process.stdin.once("data", () => r()));
-    await launched.context.storageState({ path: resolve(o.out), indexedDB: true } as any);
+    if (url) log(`Log in in the browser window. The state is saved once a page URL matches "${o.waitForUrl}"...`);
+    else if (process.stdin.isTTY) log(`Log in in the browser window, then press Enter here${closeSaves ? " or close the window" : ""} to save the state...`);
+    else if (closeSaves) log("Log in in the browser window, then close the window to save the state. (stdin is not a terminal, so Enter can't save it. To save without closing the window, run with --wait-for-url <regex>, a URL the app shows once you are logged in.)");
+    else log("stdin is not a terminal, so Enter can't save the state, and with --profile closing the window can't either. Run with --wait-for-url <regex>, a URL the app shows once you are logged in.");
+    const ended = await loginEnded(launched.context, url, timeout);
+    if (ended.how === "timeout") {
+      await fail(`takeone login gave up after ${timeout}s: ${url ? `no page reached a URL matching "${o.waitForUrl}"` : "the login was not finished"}. Nothing was saved.`, 124);
+    }
+    if (ended.how === "closed" && url) await fail(`The browser window was closed before any page reached a URL matching "${o.waitForUrl}". Nothing was saved.`);
+    // The page the login landed on may still be storing its tokens.
+    await ended.page?.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    if (!closeSaves && !launched.context.pages().length) {
+      await fail("The browser window was closed before the state was saved, and a --profile browser can't be read after that. Nothing was saved. Keep the window open, and press Enter or pass --wait-for-url.");
+    }
+    // storageState has no timeout of its own, and a browser that is going away may never answer it.
+    const state = await Promise.race([
+      launched.context.storageState({ indexedDB: true }),
+      new Promise<undefined>((r) => setTimeout(r, 30000)),
+    ]).catch(() => undefined);
+    if (!state) await fail("The browser closed or stopped responding before its state could be read. Nothing was saved.");
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, JSON.stringify(state, null, 2));
     await launched.close();
-    console.log(JSON.stringify({ state: resolve(o.out) }));
+    console.log(JSON.stringify({ state: out }));
     process.exit(0);
   });
 

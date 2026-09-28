@@ -146,4 +146,4 @@ These work on `record`, `dry-run` and `render`:
 
 `record --no-render` captures only, and `takeone render <dir>` renders it later.
 
-For login state from a real browser: `takeone login --url <app> -o state.json`. This needs a display, so run it on a laptop. Then set `browser.storageState: "state.json"`.
+For login state from a real browser: `takeone login --url <app> -o state.json`. This needs a display, so run it on a laptop. Log in, then press Enter or close the window (with `--profile`, only Enter works). Without a terminal, add `--wait-for-url <regex>` to save once a tab reaches a logged-in URL, and `--timeout <seconds>` to give up instead of waiting forever. Then set `browser.storageState: "state.json"`.
