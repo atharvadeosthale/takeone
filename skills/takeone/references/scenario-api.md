@@ -39,7 +39,7 @@ export default defineScenario(
 );
 ```
 
-Without any `startRecording()`, the whole run is recorded. Recording can be paused and resumed with `pauseRecording()` and `resumeRecording()`, or started and stopped again.
+Without any `startRecording()`, the whole run is recorded. Recording can be paused and resumed with `pauseRecording()` and `resumeRecording()`, or started and stopped again. Text typed while recording is paused or stopped still reaches the page, but it is logged as `•`, so a secret typed off camera stays out of `manifest.json`, the dry-run sheet and the key overlay.
 
 A login lives in `withExplore(scenario, { pages: [], setup: async (page) => { … } })`. `setup` receives a Playwright `Page`.
 

@@ -617,7 +617,11 @@ export class Session {
     const wpm = opts.wpm ?? m.wpm;
     const jitter = opts.jitter ?? m.typingJitter;
     const base = 60000 / (wpm * 5);
-    const at = { x: this.cursor.x, y: this.cursor.y, source: "type" as const, show: opts.showKeys };
+    // Text typed while recording is paused or stopped is off camera, and often a secret:
+    // the page gets it, the event log, the dry-run sheet and the key overlay do not.
+    const hidden = this.recordingState === "paused" || this.recordingState === "stopped";
+    const key = (k: string) => (hidden ? "•" : k);
+    const at = { x: this.cursor.x, y: this.cursor.y, source: "type" as const, show: hidden ? false : opts.showKeys };
     if (opts.instant || this.mode.fast) {
       await this.page.keyboard.insertText(text);
       this.log({ type: "key", t: this.now(), key: "insertText", ...at });
@@ -627,22 +631,22 @@ export class Session {
         if (opts.mistakes && this.rng() < opts.mistakes && /[a-z]/i.test(ch)) {
           const wrong = neighbour(ch, this.rng);
           await this.page.keyboard.type(wrong);
-          this.log({ type: "key", t: this.now(), key: wrong, ...at });
+          this.log({ type: "key", t: this.now(), key: key(wrong), ...at });
           await sleep(base * (1 + this.rng()) + 120);
           await this.page.keyboard.press("Backspace");
-          this.log({ type: "key", t: this.now(), key: "Backspace", ...at });
+          this.log({ type: "key", t: this.now(), key: key("Backspace"), ...at });
           await sleep(base * 0.8);
         }
         if (ch === "\n") await this.page.keyboard.press("Enter");
         else await this.page.keyboard.type(ch);
-        this.log({ type: "key", t: this.now(), key: ch, ...at });
+        this.log({ type: "key", t: this.now(), key: key(ch), ...at });
         let delay = base * (1 + (this.rng() * 2 - 1) * jitter);
         if (ch === " " || ch === "." || ch === ",") delay *= 1.6;
         await sleep(delay);
       }
     }
     if (!this.mode.fast) await sleep(opts.settle ?? 200);
-    await this.step("type", text.length > 40 ? text.slice(0, 40) + "…" : text);
+    await this.step("type", hidden ? "•••" : text.length > 40 ? text.slice(0, 40) + "…" : text);
   }
 
   /** Press a key or chord, e.g. "Enter", "Control+K". `showKeys` overrides the keys.mode overlay rule. */
