@@ -100,6 +100,8 @@ await s.trim(() => s.waitFor({ text: "Deployed" }));         // cut down to idle
 await s.waitFor({ text: "Deployed" }, { edit: "trim" });     // the same, as an option
 ```
 
+A wait that times out or throws is edited the same way as one that passes. When `fn` contains no wait of its own, such as `s.wait(ms)` or a loop that polls `s.page`, all of `fn` counts as the wait.
+
 A cut never lands inside a zoom: the wait plays through the camera move, and only the dead time around it is dropped.
 
 ## Config

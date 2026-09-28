@@ -207,8 +207,11 @@ export class Session {
 
   async goto(url: string, opts: { waitUntil?: "load" | "domcontentloaded" | "networkidle" | "commit"; edit?: WaitEdit } = {}) {
     const t = this.now();
-    await this.page.goto(url, { waitUntil: opts.waitUntil ?? "load" });
-    this.log({ type: "idle", t, end: this.now(), reason: `goto ${url}`, edit: opts.edit });
+    try {
+      await this.page.goto(url, { waitUntil: opts.waitUntil ?? "load" });
+    } finally {
+      this.log({ type: "idle", t, end: this.now(), reason: `goto ${url}`, edit: opts.edit });
+    }
     await this.step("goto", url);
   }
 
@@ -228,8 +231,9 @@ export class Session {
       }
     } catch (e) {
       throw new Error(`waitFor ${describe(target)} failed: ${(e as Error).message}`);
+    } finally {
+      this.log({ type: "idle", t, end: this.now(), reason: `waitFor ${describe(target)}`, edit: opts.edit });
     }
-    this.log({ type: "idle", t, end: this.now(), reason: `waitFor ${describe(target)}`, edit: opts.edit });
   }
 
   /** Poll a role+name target until it appears (or leaves), reporting what is on the page on timeout. */
@@ -262,15 +266,21 @@ export class Session {
   /** Wait for a URL (string, glob or regex). */
   async waitForURL(url: string | RegExp, opts: { timeout?: number; edit?: WaitEdit } = {}) {
     const t = this.now();
-    await this.page.waitForURL(url, { timeout: opts.timeout });
-    this.log({ type: "idle", t, end: this.now(), reason: `waitForURL ${url}`, edit: opts.edit });
+    try {
+      await this.page.waitForURL(url, { timeout: opts.timeout });
+    } finally {
+      this.log({ type: "idle", t, end: this.now(), reason: `waitForURL ${url}`, edit: opts.edit });
+    }
   }
 
   /** Wait for the network to go quiet. */
   async waitForNetworkIdle(opts: { timeout?: number; edit?: WaitEdit } = {}) {
     const t = this.now();
-    await this.page.waitForLoadState("networkidle", { timeout: opts.timeout });
-    this.log({ type: "idle", t, end: this.now(), reason: "networkidle", edit: opts.edit });
+    try {
+      await this.page.waitForLoadState("networkidle", { timeout: opts.timeout });
+    } finally {
+      this.log({ type: "idle", t, end: this.now(), reason: "networkidle", edit: opts.edit });
+    }
   }
 
   /**
@@ -282,51 +292,53 @@ export class Session {
     const t = this.now();
     const timeout = opts.timeout ?? this.config.browser.timeout;
     const deadline = Date.now() + timeout;
-    // Apps that poll never go network-idle, so this wait only gets a share of the budget.
-    // The element count below is what decides readiness.
-    await this.page
-      .waitForLoadState("networkidle", { timeout: Math.min(timeout / 3, 5000) })
-      .catch(() => {});
-
     let prev = -1;
-    let stable = 0;
-    let lastError: unknown;
-    while (stable < 2) {
-      if (Date.now() >= deadline) {
-        const why =
-          prev < 0
-            ? `the page could not be inspected${lastError ? `: ${(lastError as Error).message ?? lastError}` : ""}`
-            : prev === 0
-              ? "no interactive element became visible"
-              : `the interactive element count never settled (last count ${prev})`;
-        throw new Error(`Page not ready after ${timeout}ms: ${why}`);
+    try {
+      // Apps that poll never go network-idle, so this wait only gets a share of the budget.
+      // The element count below is what decides readiness.
+      await this.page
+        .waitForLoadState("networkidle", { timeout: Math.min(timeout / 3, 5000) })
+        .catch(() => {});
+
+      let stable = 0;
+      let lastError: unknown;
+      while (stable < 2) {
+        if (Date.now() >= deadline) {
+          const why =
+            prev < 0
+              ? `the page could not be inspected${lastError ? `: ${(lastError as Error).message ?? lastError}` : ""}`
+              : prev === 0
+                ? "no interactive element became visible"
+                : `the interactive element count never settled (last count ${prev})`;
+          throw new Error(`Page not ready after ${timeout}ms: ${why}`);
+        }
+        await sleep(300);
+        let count: number;
+        try {
+          count = await this.page.evaluate(() => {
+            let n = 0;
+            for (const el of document.querySelectorAll("a[href], button, input, select, textarea, [role], summary, h1, h2, h3")) {
+              const r = el.getBoundingClientRect();
+              if (r.width >= 1 && r.height >= 1) n++;
+            }
+            return n;
+          });
+        } catch (err) {
+          // A navigation mid-check destroys the execution context. Start counting again.
+          lastError = err;
+          stable = 0;
+          continue;
+        }
+        if (count === prev && count > 0) stable++;
+        else {
+          stable = 0;
+          prev = count;
+        }
       }
-      await sleep(300);
-      let count: number;
-      try {
-        count = await this.page.evaluate(() => {
-          let n = 0;
-          for (const el of document.querySelectorAll("a[href], button, input, select, textarea, [role], summary, h1, h2, h3")) {
-            const r = el.getBoundingClientRect();
-            if (r.width >= 1 && r.height >= 1) n++;
-          }
-          return n;
-        });
-      } catch (err) {
-        // A navigation mid-check destroys the execution context. Start counting again.
-        lastError = err;
-        stable = 0;
-        continue;
-      }
-      if (count === prev && count > 0) stable++;
-      else {
-        stable = 0;
-        prev = count;
-      }
+      if (opts.settle) await sleep(opts.settle);
+    } finally {
+      this.log({ type: "idle", t, end: this.now(), reason: `ready (${prev} interactive elements)`, edit: opts.edit });
     }
-    if (opts.settle) await sleep(opts.settle);
-    const reason = `ready (${prev} interactive elements)`;
-    this.log({ type: "idle", t, end: this.now(), reason, edit: opts.edit });
     await this.step("ready", `${prev}`);
   }
 
@@ -365,17 +377,25 @@ export class Session {
 
   private async withWaitEdit<T>(edit: WaitEdit, fn: () => Promise<T> | T): Promise<T> {
     const before = this.events.length;
+    const t = this.now();
     const pending: WaitEdit[] = [];
     this.waitEditStack.push(pending);
     try {
       return await fn();
     } finally {
       this.waitEditStack.pop();
-      // Any idle events recorded during the callback inherit this edit mode.
+      // Any idle events recorded during the callback inherit this edit mode. Waits log
+      // theirs even when they throw, so a wait that times out is edited like one that passes.
+      let waited = false;
       for (let i = before; i < this.events.length; i++) {
         const ev = this.events[i];
-        if (ev.type === "idle") ev.edit = edit;
+        if (ev.type === "idle") {
+          ev.edit = edit;
+          waited = true;
+        }
       }
+      // A callback that logged no wait of its own (s.wait, a custom poll) is one long wait.
+      if (!waited) this.log({ type: "idle", t, end: this.now(), reason: "hold", edit });
       void pending;
     }
   }
@@ -389,9 +409,11 @@ export class Session {
   /** Run an arbitrary function against the page; treated as idle setup time. */
   async run<T>(fn: (page: Page) => Promise<T>, label = "run"): Promise<T> {
     const t = this.now();
-    const out = await fn(this.page);
-    this.log({ type: "idle", t, end: this.now(), reason: label });
-    return out;
+    try {
+      return await fn(this.page);
+    } finally {
+      this.log({ type: "idle", t, end: this.now(), reason: label });
+    }
   }
 
   // ----------------------------------------------------------------------
