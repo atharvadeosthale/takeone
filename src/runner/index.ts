@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, unlinkSync, existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Page } from "playwright";
-import type { RecordingManifest, ScenarioConfig, UserScenarioConfig } from "../types.js";
+import type { FrameIndexEntry, RecordingManifest, ScenarioConfig, UserScenarioConfig } from "../types.js";
 import { resolveConfig } from "../config.js";
 import { launchBrowser } from "../browser.js";
 import { FrameCapture } from "./capture.js";
@@ -51,6 +51,42 @@ export async function recordScenario(scenario: Scenario, opts: RecordOptions): P
   // Don't write frames until the scenario opts in; if it never does we keep everything.
   capture.setWriting(true);
 
+  /** Trim the frames to the recording segments and write the manifest. Synchronous, so a signal handler can call it. */
+  const save = (frames: FrameIndexEntry[], duration: number) => {
+    // Trim frames that fall outside recording segments (pre-roll setup).
+    const segments = recordingSegments(session.events, duration);
+    const kept = frames.filter((f) => segments.some(([a, b]) => f.t >= a - 100 && f.t <= b + 100));
+    for (const f of frames) if (!kept.includes(f)) safeUnlink(join(framesDir, f.file));
+
+    const manifest: RecordingManifest = {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      config,
+      viewport: config.viewport,
+      frameSize: capture.frameSize ?? {
+        width: config.viewport.width * config.viewport.deviceScaleFactor,
+        height: config.viewport.height * config.viewport.deviceScaleFactor,
+      },
+      frames: kept,
+      events: session.events,
+      duration,
+    };
+    const manifestPath = join(outDir, "manifest.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    log(`Captured ${kept.length} frames over ${(duration / 1000).toFixed(1)}s -> ${manifestPath}`);
+    return { manifest, manifestPath };
+  };
+
+  // Ctrl-C or a kill mid-take keeps what was captured, the way a failed run does. The
+  // manifest is written before exiting; Playwright's exit handler then kills the browser.
+  const interrupt = (signal: NodeJS.Signals) => {
+    const kept = save(capture.written(), Date.now() - started).manifest.frames.length;
+    log(`Stopped by ${signal}.${kept ? ` The ${kept} frames captured so far were kept. \`takeone render ${opts.outDir}\` renders them as a partial video.` : ""}`);
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", interrupt);
+
   try {
     log("Running scenario");
     await scenario.run(session);
@@ -61,28 +97,10 @@ export async function recordScenario(scenario: Scenario, opts: RecordOptions): P
   const frames = await capture.stop();
   const duration = Date.now() - started;
   await launched.close();
-
-  // Trim frames that fall outside recording segments (pre-roll setup).
-  const segments = recordingSegments(session.events, duration);
-  const kept = frames.filter((f) => segments.some(([a, b]) => f.t >= a - 100 && f.t <= b + 100));
-  for (const f of frames) if (!kept.includes(f)) safeUnlink(join(framesDir, f.file));
-
-  const manifest: RecordingManifest = {
-    version: 1,
-    createdAt: new Date().toISOString(),
-    config,
-    viewport: config.viewport,
-    frameSize: capture.frameSize ?? {
-      width: config.viewport.width * config.viewport.deviceScaleFactor,
-      height: config.viewport.height * config.viewport.deviceScaleFactor,
-    },
-    frames: kept,
-    events: session.events,
-    duration,
-  };
-  const manifestPath = join(outDir, "manifest.json");
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-  log(`Captured ${kept.length} frames over ${(duration / 1000).toFixed(1)}s -> ${manifestPath}`);
+  const { manifest, manifestPath } = save(frames, duration);
+  const kept = manifest.frames;
+  process.off("SIGINT", interrupt);
+  process.off("SIGTERM", interrupt);
   // A failed run keeps what it captured: minutes of footage should never vanish with the error.
   if (error) {
     const e = error instanceof Error ? error : new Error(String(error));

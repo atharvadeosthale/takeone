@@ -66,6 +66,11 @@ export class FrameCapture {
     writeFileSync(join(this.dir, file), buf);
   }
 
+  /** Frames written so far, in time order, without stopping the screencast. */
+  written(): FrameIndexEntry[] {
+    return [...this.frames].sort((a, b) => a.t - b.t);
+  }
+
   async stop(): Promise<FrameIndexEntry[]> {
     if (!this.active) return this.frames;
     this.active = false;
