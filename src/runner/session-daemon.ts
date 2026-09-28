@@ -292,7 +292,7 @@ async function buildStep(req: DoRequest, obs: Observation, notes: string[]): Pro
   }
 }
 
-async function doCommand(req: DoRequest): Promise<Reply> {
+async function doCommand(req: DoRequest, signal: AbortSignal): Promise<Reply> {
   if (crashed) return { ok: false, lines: ["The page crashed earlier. Run `takeone session stop` and start again."] };
   const notes: string[] = [];
   const before = await observe(page);
@@ -305,11 +305,14 @@ async function doCommand(req: DoRequest): Promise<Reply> {
 
   let failure: string | undefined;
   const t0 = Date.now();
+  // A command that ran out of time has already been answered: it acts no further.
+  signal.throwIfAborted();
   try {
     await runStep(live, step);
   } catch (e) {
     failure = (e as Error).message;
   }
+  signal.throwIfAborted();
   const camera = isCameraStep(step);
   let settled = camera ? true : await settle();
   let after = await observe(page);
@@ -326,6 +329,8 @@ async function doCommand(req: DoRequest): Promise<Reply> {
       after = await observe(page);
     }
   }
+  // Nor does it write the journal or replace the view the next command's numbers refer to.
+  signal.throwIfAborted();
   entry.ok = !failure;
   entry.urlAfter = after.url;
   entry.stateAfter = after.fingerprint;
@@ -361,8 +366,9 @@ async function doCommand(req: DoRequest): Promise<Reply> {
   return { ok: !failure, lines, view };
 }
 
-async function lookCommand(req: { role?: string; filter?: string; all?: boolean }): Promise<Reply> {
+async function lookCommand(req: { role?: string; filter?: string; all?: boolean }, signal: AbortSignal): Promise<Reply> {
   const obs = await observe(page);
+  signal.throwIfAborted();
   const view = await showView(obs, "look");
   return { ok: true, lines: [...formatObservation(obs, req), ...(view ? [viewLine(view)] : []), ...drainProblems()], view };
 }
@@ -386,8 +392,10 @@ async function journalCommand(req: { action?: "drop" | "keep" | "setup" | "clear
 }
 
 /** Replay the kept steps in a fresh tab of the same logged-in browser. */
-async function verify(startAt: string, entries: JournalEntry[]): Promise<string[]> {
+async function verify(startAt: string, entries: JournalEntry[], signal: AbortSignal): Promise<string[]> {
   const tab = await context.newPage();
+  // Closing the tab ends a replay that ran out of time, wherever it is.
+  signal.addEventListener("abort", () => void tab.close().catch(() => {}));
   watch(tab);
   const t0 = Date.now();
   const s = new Session(tab, cfg, () => Date.now() - t0, { dry: true, fast: true });
@@ -418,7 +426,7 @@ async function verify(startAt: string, entries: JournalEntry[]): Promise<string[
   }
 }
 
-async function exportCommand(req: { file: string; name?: string; from?: string; verify?: boolean; force?: boolean; pkg: string }): Promise<Reply> {
+async function exportCommand(req: { file: string; name?: string; from?: string; verify?: boolean; force?: boolean; pkg: string }, signal: AbortSignal): Promise<Reply> {
   saveJournal();
   const kept = keptEntries(journal);
   if (!kept.record.some((e) => !isCameraStep(e.step))) return { ok: false, lines: ["Nothing to export: no recorded steps. `takeone journal` shows where each step landed."] };
@@ -431,10 +439,11 @@ async function exportCommand(req: { file: string; name?: string; from?: string; 
   const lines: string[] = [];
   let ok = true;
   if (req.verify !== false) {
-    const v = await verify(startAt, [...setupSteps, ...body]);
+    const v = await verify(startAt, [...setupSteps, ...body], signal);
     ok = v[0].startsWith("✓");
     lines.push(...v);
   }
+  signal.throwIfAborted();
   const file = resolve(req.file);
   const from = req.from ?? setupFile;
   let importFrom: string | undefined;
@@ -492,19 +501,22 @@ const server = createServer((req, res) => {
     const run = async (): Promise<Reply> => {
       const body = raw ? JSON.parse(raw) : {};
       const budget = (body.timeout ?? 0) + (body.budget ?? 45000);
-      let timer: NodeJS.Timeout;
+      // Out of time, a command is answered and stopped. The next one starts at once, so one left
+      // running would act on the page and write the journal behind its back.
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), budget);
       const work =
-        req.url === "/do" ? doCommand(body)
-        : req.url === "/look" ? lookCommand(body)
+        req.url === "/do" ? doCommand(body, stop.signal)
+        : req.url === "/look" ? lookCommand(body, stop.signal)
         : req.url === "/journal" ? journalCommand(body)
-        : req.url === "/export" ? exportCommand(body)
+        : req.url === "/export" ? exportCommand(body, stop.signal)
         : Promise.resolve({ ok: false, lines: [`unknown command ${req.url}`] });
-      const over = new Promise<Reply>((r) => {
-        timer = setTimeout(
-          () => r({ ok: false, lines: [`✗ gave up after ${Math.round(budget / 1000)}s: the page is not responding (now at ${pathOf(page.url())}).`, ...drainProblems()] }),
-          budget,
-        );
-      });
+      const what = req.url === "/do" ? body.verb : req.url?.slice(1);
+      const over = new Promise<Reply>((r) =>
+        stop.signal.addEventListener("abort", () =>
+          r({ ok: false, lines: [`✗ ${what} ran out of time after ${Math.round(budget / 1000)}s and was stopped. The page may not be responding (now at ${pathOf(page.url())}).`, ...drainProblems()] }),
+        ),
+      );
       return Promise.race([work, over]).finally(() => clearTimeout(timer));
     };
     const p = queue.then(run, run).catch((e): Reply => ({ ok: false, lines: [`✗ ${(e as Error).message}`, ...drainProblems()] }));

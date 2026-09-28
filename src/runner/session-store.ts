@@ -6,6 +6,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { request } from "node:http";
 import { chromium } from "playwright";
 import { resolveExecutablePath, ensureChromium } from "../browser.js";
 import { resolveConfig } from "../config.js";
@@ -140,11 +141,26 @@ export interface CommandReply {
   view?: string;
 }
 
-/** Send a command to the daemon's control port. */
+/**
+ * Send a command to the daemon's control port. Not with fetch, which gives up on a reply that
+ * takes over 300s: a `wait-for` may take longer, and the daemon's own budget ends every command.
+ */
 export async function sendCommand(info: SessionInfo, path: string, body: unknown): Promise<CommandReply> {
   if (!info.controlPort) throw new Error("This session was started by an older takeone. Run `takeone session stop` and start it again.");
-  const res = await fetch(`http://127.0.0.1:${info.controlPort}${path}`, { method: "POST", body: JSON.stringify(body) });
-  return (await res.json()) as CommandReply;
+  const port = info.controlPort;
+  const text = await new Promise<string>((done, fail) => {
+    const failed = (e: Error) => fail(new Error(`The session on port ${info.port} did not answer (${e.message}). \`takeone session status\` shows whether it is still running.`));
+    const req = request({ host: "127.0.0.1", port, path, method: "POST", agent: false }, (res) => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (c: string) => (data += c));
+      res.on("end", () => done(data));
+      res.on("error", failed);
+    });
+    req.on("error", failed);
+    req.end(JSON.stringify(body));
+  });
+  return JSON.parse(text) as CommandReply;
 }
 
 /** Wait until the daemon has published its session file and finished login setup. */
