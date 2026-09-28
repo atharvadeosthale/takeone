@@ -114,7 +114,7 @@ export interface MotionConfig {
  * - `"keep"` (default): shown in full, real time. Waiting is the default so a slow step
  *   such as provisioning is visible rather than silently cut.
  * - `"trim"`: shortened to `idleTrim.keep`.
- * - a number: time-lapse, played that many times faster (`8` = 8x).
+ * - a number: time-lapse, played that many times faster (`8` = 8x). 1 or less plays in real time.
  */
 export type WaitEdit = "trim" | "keep" | number;
 

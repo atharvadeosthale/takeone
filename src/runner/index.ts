@@ -97,7 +97,8 @@ export function recordingSegments(events: RecordingManifest["events"], duration:
   const segs: [number, number][] = [];
   let open: number | null = null;
   let sawAny = false;
-  for (const ev of events) {
+  // In time order, so a pause and resume added to the end of a hand-edited manifest still apply.
+  for (const ev of [...events].sort((a, b) => a.t - b.t)) {
     if (ev.type !== "recording") continue;
     sawAny = true;
     if ((ev.state === "start" || ev.state === "resume") && open === null) open = ev.t;

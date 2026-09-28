@@ -45,10 +45,21 @@ interface Piece {
   rate: number;
 }
 
+/**
+ * An idle event's edit mode. Manifests get edited by hand, so a factor of 1 or less plays in
+ * real time, and a value takeone doesn't know is an error rather than a silent trim.
+ */
+function editMode(ev: Extract<RecordedEvent, { type: "idle" }>): WaitEdit {
+  const edit: unknown = ev.edit ?? "keep";
+  if (typeof edit === "number") return edit > 1 ? edit : "keep";
+  if (edit === "keep" || edit === "trim") return edit;
+  throw new Error(`Idle event at t=${ev.t} (${ev.reason}) has an unknown edit ${JSON.stringify(edit)}. Use "keep", "trim" or a time-lapse factor such as 8.`);
+}
+
 /** Source time an idle stretch keeps, and how fast it plays, given its edit mode. */
-function editIdle(ev: { t: number; end: number; edit?: WaitEdit }, cfg: ScenarioConfig, protect: [number, number][]): Piece[] {
+function editIdle(ev: Extract<RecordedEvent, { type: "idle" }>, cfg: ScenarioConfig, protect: [number, number][]): Piece[] {
   // Waiting is the default: a wait is shown in real time unless it asks otherwise.
-  const mode: WaitEdit = ev.edit ?? "keep";
+  const mode = editMode(ev);
   const len = ev.end - ev.t;
 
   if (mode === "keep") return [{ srcStart: ev.t, srcEnd: ev.end, rate: 1 }];
