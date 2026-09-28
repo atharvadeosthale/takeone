@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync } 
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
-import { resolveExecutablePath, ensureChromium } from "../browser.js";
+import { resolveExecutablePath, ensureChromium, resolveStorageState } from "../browser.js";
 import { resolveConfig } from "../config.js";
 import type { BrowserConfig, UserScenarioConfig } from "../types.js";
 
@@ -88,12 +88,15 @@ export function startSessionDaemon(opts: {
 }): { pid: number } {
   const cfg = resolveConfig(opts.config);
   ensureChromium(cfg.browser);
+  // Checked here rather than in the daemon, whose output nobody sees, and made absolute so
+  // a relative path always means the folder takeone was run in.
+  const storageState = resolveStorageState(cfg.browser);
   const args = [
     daemonEntry(),
     "--port", String(opts.port),
     "--user-data-dir", opts.userDataDir,
     "--session", sessionFile(opts.sessionPath),
-    "--config", JSON.stringify(cfg),
+    "--config", JSON.stringify({ ...cfg, browser: { ...cfg.browser, storageState } }),
   ];
   if (opts.url) args.push("--url", opts.url);
   if (opts.setup) args.push("--setup", opts.setup);
@@ -123,11 +126,11 @@ function daemonEntry(): string {
 }
 
 /** Load a setup callback from a scenario file, so a session can log in the same way. */
-export async function loadSetup(file: string): Promise<(page: import("playwright").Page) => Promise<void>> {
+export async function loadSetup(file: string, required = true): Promise<((page: import("playwright").Page) => Promise<void>) | undefined> {
   const { loadScenario } = await import("../load-scenario.js");
   const scenario = await loadScenario(resolve(file));
   const setup = scenario.explore?.setup;
-  if (!setup) throw new Error(`${file} has no explore.setup to run. Add one, or pass credentials with --login-url.`);
+  if (!setup && required) throw new Error(`${file} has no explore.setup to run. Add one, or log in with browser.storageState.`);
   return setup;
 }
 
@@ -185,7 +188,8 @@ export async function ensureSession(opts: { scenario?: string; url?: string; con
   if (opts.scenario) {
     const { loadScenario } = await import("../load-scenario.js");
     const sc = await loadScenario(resolve(opts.scenario));
-    config = { ...sc.config, ...(config ?? {}) };
+    // Merged key by key: a `headed` override must not drop the scenario's other browser settings.
+    config = resolveConfig(sc.config, config);
   }
   const { pid } = startSessionDaemon({
     port: sessionPort(),

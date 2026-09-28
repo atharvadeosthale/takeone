@@ -108,12 +108,13 @@ sessionCmd
       console.log(JSON.stringify({ status: "already-running", ...existing }, null, 2));
       return;
     }
+    const scenario = o.scenario ? await loadScenario(o.scenario) : undefined;
     const { pid } = startSessionDaemon({
       port: Number(o.port),
       userDataDir: resolve(o.profile),
       url: o.url,
       setup: o.scenario ? resolve(o.scenario) : undefined,
-      config: { browser: { headless: !o.headed } },
+      config: resolveConfig(scenario?.config, { browser: { headless: !o.headed } }),
       log,
     });
     const info = await waitForSession(pid);
@@ -542,7 +543,7 @@ THE LOOP (no scenario file, no selectors, no probe scripts)
   takeone session export demo.ts              # replays the path to prove it, then writes it
   takeone record demo.ts                      # -> output.mp4
 
-  Logged-in app: add --scenario <file with explore.setup> to the FIRST command. It logs in once.
+  Logged-in app: add --scenario <file with explore.setup or browser.storageState> to the FIRST command. It logs in once.
 
 SEEING THE PAGE
   \`takeone look\` and every \`takeone do\` that lands on a new page or opens a dialog print the VIEW:

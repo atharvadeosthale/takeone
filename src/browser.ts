@@ -27,7 +27,7 @@ export function ensureChromium(cfg: BrowserConfig, log: (s: string) => void = ()
 
 // `require` shim for ESM
 import { createRequire } from "node:module";
-import { dirname as dirOf, join as joinPath } from "node:path";
+import { dirname as dirOf, join as joinPath, resolve as resolvePath } from "node:path";
 const require = createRequire(import.meta.url);
 
 /** Playwright's own CLI. Its package exports do not include "./cli", so find it next to package.json. */
@@ -54,9 +54,24 @@ export interface LaunchedBrowser {
   close: () => Promise<void>;
 }
 
+/**
+ * The storage state file, resolved from the folder takeone was run in. A missing file stops
+ * the run: going on without it would rehearse or record the app logged out.
+ */
+export function resolveStorageState(cfg: BrowserConfig): string | undefined {
+  const state = cfg.storageState;
+  if (!state) return undefined;
+  // Playwright also takes the state itself as an object; only a path needs resolving.
+  if (typeof state !== "string") return state;
+  const file = resolvePath(state);
+  if (!existsSync(file)) throw new Error(`Storage state file not found at ${file}. Save a login with \`takeone login --url <app> -o ${state}\`, or point browser.storageState at an existing file.`);
+  return file;
+}
+
 export async function launchBrowser(cfg: BrowserConfig, viewport: ViewportConfig, log?: (s: string) => void): Promise<LaunchedBrowser> {
   ensureChromium(cfg, log);
   const executablePath = resolveExecutablePath(cfg);
+  const storageState = resolveStorageState(cfg);
   const args = [
     "--disable-blink-features=AutomationControlled",
     "--hide-scrollbars",
@@ -84,6 +99,9 @@ export async function launchBrowser(cfg: BrowserConfig, viewport: ViewportConfig
       args,
       ...contextOptions,
     });
+    // A persistent context takes no storageState option, so the file is loaded after launch.
+    // Playwright replaces the profile's cookies, and the storage of each origin in the file.
+    if (storageState) await context.setStorageState(storageState);
     context.setDefaultTimeout(cfg.timeout);
     await context.addInitScript(NAME_HELPER_SCRIPT);
     if (cfg.sameTabLinks) await context.addInitScript(sameTab);
@@ -93,7 +111,7 @@ export async function launchBrowser(cfg: BrowserConfig, viewport: ViewportConfig
   const browser = await chromium.launch({ headless: cfg.headless, executablePath, args });
   const context = await browser.newContext({
     ...contextOptions,
-    storageState: cfg.storageState,
+    storageState,
   });
   context.setDefaultTimeout(cfg.timeout);
   await context.addInitScript(NAME_HELPER_SCRIPT);

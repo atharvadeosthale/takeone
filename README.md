@@ -165,6 +165,8 @@ Start the rehearsal with it: `npx takeone do goto http://localhost:3000 --scenar
 
 `npx takeone login --url https://app.example.com -o state.json` saves a real login from a visible browser instead, so it needs a display. Point `browser.storageState` at the file.
 
+The session, `record` and `dry-run` load the file before any setup runs, so a scenario can log in with the file alone. A relative path is read from the folder you run takeone in. With `--profile`, the file replaces the profile's cookies, and the storage of each site in the file.
+
 ## How it works
 
 Playwright drives headless Chromium. Frames come from the DevTools screencast at full resolution, and every pointer move, click, key press, scroll, zoom and wait goes into a `manifest.json`.

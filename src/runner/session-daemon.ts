@@ -521,10 +521,14 @@ publish({ url: undefined, ready: false });
 
 let setupError: string | undefined;
 try {
+  // A persistent context takes no storageState option, so the file is loaded before the login
+  // setup. Playwright replaces the profile's cookies, and the storage of each origin in the file.
+  if (cfg.browser.storageState) await context.setStorageState(cfg.browser.storageState);
   if (setupFile) {
     const { loadSetup } = await import("./session-store.js");
-    const setup = await loadSetup(setupFile);
-    await setup(page);
+    // A scenario that logs in with its storage state needs no explore.setup.
+    const setup = await loadSetup(setupFile, !cfg.browser.storageState);
+    await setup?.(page);
   }
   if (startUrl) await page.goto(startUrl, { waitUntil: "domcontentloaded" });
   process.stdout.write(`session ready on ${page.url()}\n`);
