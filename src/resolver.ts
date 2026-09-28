@@ -38,9 +38,14 @@ export type Target =
   | { text: string | RegExp; nth?: number; exact?: boolean; within?: string | Locator; near?: string };
 
 export interface TextTarget {
+  /**
+   * Text on the page. A string prefers an element with exactly this text, and otherwise
+   * matches any element that contains it, ignoring case.
+   */
   text: string | RegExp;
   /** 1-based index when several elements share the text. */
   nth?: number;
+  /** Match the whole text, case-sensitive, and never fall back to a substring. */
   exact?: boolean;
   within?: string | Locator;
   /** Text next to the element you mean. See {@link RoleTarget.near}. */
@@ -276,34 +281,36 @@ export function describeEntry(entry: IndexEntry): string {
 
 /**
  * Resolve a role+name target, reporting ambiguity with sibling positions instead of
- * silently acting on the first match.
+ * silently acting on the first match. With `visible`, elements that are not visible
+ * right now do not count as matches.
  */
-export async function resolveRoleTarget(page: Page, t: RoleTarget): Promise<{ locator: Locator; how: string }> {
+export async function resolveRoleTarget(page: Page, t: RoleTarget, opts: { visible?: boolean } = {}): Promise<{ locator: Locator; how: string }> {
   const scope = t.within ? (typeof t.within === "string" ? page.locator(t.within).first() : t.within) : page;
   const nameStr = nameToText(t.name);
+  const noMatch = opts.visible ? "No visible element matched" : "No element matched";
 
   // A RegExp name is an explicit request for a group, so ambiguity is the point.
   if (t.name instanceof RegExp) {
-    const loc = scope.getByRole(t.role as any, { name: t.name });
+    const loc = visibleOnly(scope.getByRole(t.role as any, { name: t.name }), opts.visible);
     const count = await loc.count();
     const how = `getByRole(${t.role}, ${t.name})`;
-    if (count === 0) throw new Error(`No element matched ${how}.\n${await nearMissReport(page, t.role, nameStr)}`);
+    if (count === 0) throw new Error(`${noMatch} ${how}.\n${await nearMissReport(page, t.role, nameStr)}`);
     if (t.near) return nearOf(loc, t.near, how, count);
     return { locator: t.nth !== undefined ? loc.nth(t.nth - 1) : loc.first(), how: `${how} (${count} matches)` };
   }
 
   const exact = t.exact ?? true;
-  let loc = scope.getByRole(t.role as any, { name: t.name, exact });
+  let loc = visibleOnly(scope.getByRole(t.role as any, { name: t.name, exact }), opts.visible);
   let count = await loc.count();
   let how = `getByRole(${t.role}, ${JSON.stringify(t.name)})`;
 
   if (count === 0 && exact) {
-    loc = scope.getByRole(t.role as any, { name: new RegExp(escapeRe(truncate(nameStr)), "i") });
+    loc = visibleOnly(scope.getByRole(t.role as any, { name: new RegExp(escapeRe(truncate(nameStr)), "i") }), opts.visible);
     count = await loc.count();
     how = `getByRole(${t.role}, /${truncate(nameStr)}/i)`;
   }
   if (count === 0) {
-    throw new Error(`No element matched ${how}.\n${await nearMissReport(page, t.role, nameStr)}`);
+    throw new Error(`${noMatch} ${how}.\n${await nearMissReport(page, t.role, nameStr)}`);
   }
   if (t.near) return nearOf(loc, t.near, how, count);
   if (t.nth !== undefined) {
@@ -330,21 +337,25 @@ async function nearOf(loc: Locator, near: string, how: string, count: number): P
   return { locator: loc.nth(i), how: `${how} near ${JSON.stringify(near)}` };
 }
 
-/** Resolve a text target the same way role targets resolve: exact, then tolerant. */
-export async function resolveTextTarget(page: Page, t: TextTarget): Promise<{ locator: Locator; how: string }> {
+/**
+ * Resolve a text target the same way role targets resolve: exact, then tolerant, so plain
+ * text also matches a longer text that contains it. `exact: true` skips the tolerant pass.
+ */
+export async function resolveTextTarget(page: Page, t: TextTarget, opts: { visible?: boolean } = {}): Promise<{ locator: Locator; how: string }> {
   const scope = t.within ? (typeof t.within === "string" ? page.locator(t.within).first() : t.within) : page;
   const text = t.text instanceof RegExp ? t.text : t.text;
-  let loc = scope.getByText(text as any, { exact: t.exact ?? (t.text instanceof RegExp ? false : true) });
+  const noMatch = opts.visible ? "No visible element matched" : "No element matched";
+  let loc = visibleOnly(scope.getByText(text as any, { exact: t.exact ?? (t.text instanceof RegExp ? false : true) }), opts.visible);
   let count = await loc.count();
   let how = `getByText(${t.text instanceof RegExp ? t.text : JSON.stringify(t.text)})`;
 
-  if (count === 0) {
+  if (count === 0 && t.exact !== true) {
     const loose = typeof t.text === "string" ? new RegExp(escapeRe(truncate(t.text)), "i") : t.text;
-    loc = scope.getByText(loose as any, { exact: false });
+    loc = visibleOnly(scope.getByText(loose as any, { exact: false }), opts.visible);
     count = await loc.count();
     how = `getByText(/${text instanceof RegExp ? text.source : escapeRe(truncate(String(text)))}/i)`;
   }
-  if (count === 0) throw new Error(`No element matched ${how}.\n${await nearMissReport(page, "", nameToText(t.text))}`);
+  if (count === 0) throw new Error(`${noMatch} ${how}.\n${await nearMissReport(page, "", nameToText(t.text))}`);
   if (t.near) return nearOf(loc, t.near, how, count);
   if (t.nth !== undefined) {
     if (t.nth > count) throw new Error(`${how} matched ${count} elements; nth=${t.nth} is out of range.`);
@@ -434,6 +445,11 @@ async function ambiguityLines(loc: Locator, matches: Match[], label: (m: Match) 
 
 function nameToText(name: string | RegExp): string {
   return typeof name === "string" ? name : name.source;
+}
+
+/** Narrow a locator to the elements that are visible now, when asked to. */
+function visibleOnly(loc: Locator, visible?: boolean): Locator {
+  return visible ? loc.filter({ visible: true }) : loc;
 }
 
 /** Match positions in visual order, with the role and name each carries. */

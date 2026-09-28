@@ -61,6 +61,8 @@ Every action and wait takes a target:
 
 A named target waits up to `browser.timeout` for the element to appear, so a page that is still rendering does not fail the step. If a name matches several elements, the error lists what sets each apart and suggests `near`.
 
+When no element has exactly the text, a text target matches a longer text that contains it, ignoring case: `{ text: "Deployed" }` also matches "Not deployed yet". For exact status text, add `exact: true` or use an anchored RegExp such as `/^Deployed$/`.
+
 ## Session methods
 
 | Method | Options and notes |

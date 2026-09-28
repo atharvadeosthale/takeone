@@ -232,17 +232,20 @@ export class Session {
     this.log({ type: "idle", t, end: this.now(), reason: `waitFor ${describe(target)}`, edit: opts.edit });
   }
 
-  /** Poll a role+name target until it appears (or leaves), reporting what is on the page on timeout. */
+  /** Poll a role+name or text target until it reaches the state, reporting what is on the page on timeout. */
   private async pollRoleTarget(target: RoleTarget | TextTarget, state: string, timeout: number) {
     const wantGone = state === "hidden" || state === "detached";
+    // For "visible" and "hidden" only visible elements count, so a hidden match neither
+    // satisfies a visible wait nor holds up a hidden one.
+    const visible = state === "visible" || state === "hidden";
     const deadline = Date.now() + timeout;
     let last: unknown;
     while (Date.now() < deadline) {
       try {
         const { locator } = isTextTarget(target)
-          ? await resolveTextTarget(this.page, target)
-          : await resolveRoleTarget(this.page, target);
-        await locator.waitFor({ state: "attached", timeout: 500 });
+          ? await resolveTextTarget(this.page, target, { visible })
+          : await resolveRoleTarget(this.page, target, { visible });
+        await locator.waitFor({ state: visible ? "visible" : "attached", timeout: 500 });
         if (!wantGone) return;
       } catch (e) {
         // Several matches still means it is on the page, which is all a wait asks.
