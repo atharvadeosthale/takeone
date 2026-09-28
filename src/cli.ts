@@ -83,7 +83,8 @@ sharedOpts(
   const outDir = o.out ?? defaultOutDir(file, scenario.config.name);
   const rec = await recordScenario(scenario, { outDir, config: overrides, log });
   if (o.render) {
-    const res = await renderRecording({ recordingDir: rec.outDir, config: overrides, contactSheet: o.contactSheet, log, onProgress: progress });
+    // The overrides are already in manifest.config, so passing them again would only save a duplicate look.
+    const res = await renderRecording({ recordingDir: rec.outDir, contactSheet: o.contactSheet, log, onProgress: progress });
     console.log(JSON.stringify({ outDir: rec.outDir, video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs }, null, 2));
   } else {
     console.log(JSON.stringify({ outDir: rec.outDir, manifest: rec.manifestPath, frames: rec.manifest.frames.length }, null, 2));
@@ -376,12 +377,13 @@ program
 sharedOpts(
   program
     .command("render")
-    .description("Render (or re-render) a captured recording with the given look")
+    .description("Render (or re-render) a captured recording with the given look. The recording keeps that look for later renders")
     .argument("<recordingDir>", "directory containing manifest.json")
     .option("-o, --out <file>", "output video file")
-    .option("--no-contact-sheet", "skip the keyframe sheet"),
+    .option("--no-contact-sheet", "skip the keyframe sheet")
+    .option("--reset-look", "drop the look saved by earlier renders and start again from the recorded config"),
 ).action(async (dir: string, o) => {
-  const res = await renderRecording({ recordingDir: dir, outFile: o.out, config: parseOverrides(o), contactSheet: o.contactSheet, log, onProgress: progress });
+  const res = await renderRecording({ recordingDir: dir, outFile: o.out, config: parseOverrides(o), resetLook: o.resetLook, contactSheet: o.contactSheet, log, onProgress: progress });
   console.log(JSON.stringify({ video: res.outFile, keyframes: res.contactSheet, durationMs: res.durationMs }, null, 2));
 });
 
@@ -592,7 +594,8 @@ MCP
 THE LOOK (after the export works)
   Edit the exported file's config: viewport/deviceScaleFactor (capture), output (video size,
   fps), frame (padding, background, radius), cursor, zoom, keys. \`takeone render <dir>\` restyles
-  an existing capture without recording again. For a sharp 4K output, capture at dpr 3.
+  an existing capture without recording again, and the capture keeps that look for later renders
+  (--reset-look drops it). For a sharp 4K output, capture at dpr 3.
   Waits play in real time unless wrapped: s.lapse(8, () => ...) or s.trim(() => ...).
 `;
 

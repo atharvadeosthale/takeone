@@ -146,4 +146,6 @@ These work on `record`, `dry-run` and `render`:
 
 `record --no-render` captures only, and `takeone render <dir>` renders it later.
 
+`render` saves the look settings it is given (`output`, `frame`, `cursor`, `zoom`, `idleTrim`, `keys`) in the recording's `manifest.json` as `renderConfig`. Every render applies the recorded `config`, then `renderConfig`, then its own flags, so a re-render without flags keeps the latest look. `render --reset-look` starts again from the recorded `config`.
+
 For login state from a real browser: `takeone login --url <app> -o state.json`. This needs a display, so run it on a laptop. Then set `browser.storageState: "state.json"`.

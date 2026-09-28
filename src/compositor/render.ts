@@ -1,9 +1,9 @@
-import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, renameSync } from "node:fs";
 import { join, resolve, dirname, isAbsolute } from "node:path";
 import { cpus } from "node:os";
 import { chromium, type Browser } from "playwright";
 import type { RecordingManifest, ScenarioConfig, UserScenarioConfig, Point } from "../types.js";
-import { resolveConfig, resolveCursorSize } from "../config.js";
+import { deepMerge, resolveConfig, resolveCursorSize } from "../config.js";
 import { ensureChromium, resolveExecutablePath } from "../browser.js";
 import { spawnFfmpeg, runFfmpeg } from "../ffmpeg.js";
 import { clamp, lerp } from "../motion.js";
@@ -15,8 +15,13 @@ export interface RenderOptions {
   recordingDir: string;
   /** Output file. Default <recordingDir>/output.<format>. */
   outFile?: string;
-  /** Overrides on top of the config stored in the manifest (frame, cursor, zoom, output...). */
+  /**
+   * Overrides on top of the config stored in the manifest and the look saved by earlier renders.
+   * Their look (frame, cursor, zoom, output...) is saved in the manifest for later renders.
+   */
   config?: UserScenarioConfig;
+  /** Drop the look saved by earlier renders and start again from the manifest's config. */
+  resetLook?: boolean;
   /** Also write a tiled keyframe sheet next to the video. Default true. */
   contactSheet?: boolean;
   log?: (msg: string) => void;
@@ -49,7 +54,9 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
   const manifestPath = join(dir, "manifest.json");
   if (!existsSync(manifestPath)) throw new Error(`No manifest.json in ${dir}`);
   const manifest: RecordingManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const cfg: ScenarioConfig = resolveConfig(manifest.config, opts.config);
+  const saved = opts.resetLook ? undefined : manifest.renderConfig;
+  if (saved) log("Using the look saved by earlier renders (renderConfig in manifest.json; --reset-look drops it)");
+  const cfg: ScenarioConfig = resolveConfig(manifest.config, saved, opts.config);
   const { width: W, height: H, fps } = cfg.output;
   const outFile = resolve(opts.outFile ?? join(dir, `output.${cfg.output.format}`));
   mkdirSync(dirname(outFile), { recursive: true });
@@ -190,6 +197,13 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
   const took = Date.now() - start;
   log(`Encoded ${totalFrames} frames in ${(took / 1000).toFixed(1)}s (${(totalFrames / (took / 1000)).toFixed(1)} fps) -> ${outFile}`);
 
+  // Remember this look, so a later render without overrides still looks like this one.
+  const look = deepMerge<UserScenarioConfig>(saved ?? {}, lookOf(opts.config));
+  if (JSON.stringify(look) !== JSON.stringify(manifest.renderConfig ?? {})) {
+    saveLook(manifestPath, look);
+    log(Object.keys(look).length ? `Saved the look in ${manifestPath}; later renders start from it` : `Dropped the saved look from ${manifestPath}`);
+  }
+
   let contactSheet: string | undefined;
   if (opts.contactSheet !== false) {
     contactSheet = join(dirname(outFile), "output-keyframes.jpg");
@@ -203,6 +217,33 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
     ]).catch((e) => log(`Keyframe sheet failed: ${e.message}`));
   }
   return { outFile, contactSheet, durationMs: outDuration, frames: totalFrames };
+}
+
+/** Config sections that change the rendered video. Capture settings (viewport, browser, motion...) are never saved as the look. */
+const LOOK_KEYS = ["output", "frame", "cursor", "zoom", "idleTrim", "keys"] as const;
+
+function lookOf(config: UserScenarioConfig | undefined): UserScenarioConfig {
+  const picked: Record<string, unknown> = {};
+  for (const key of LOOK_KEYS) {
+    const section = config?.[key];
+    if (section && Object.keys(section).length) picked[key] = section;
+  }
+  const look = picked as UserScenarioConfig;
+  // A relative image is found from wherever render runs; saved absolute, a later render from elsewhere still finds it.
+  const bg = look.frame?.background;
+  if (typeof bg === "object" && bg.image && !isAbsolute(bg.image)) look.frame = { ...look.frame, background: { ...bg, image: resolve(bg.image) } };
+  return look;
+}
+
+/** Re-read before writing so manifest edits made during the render survive, and rename so a crash never leaves half a manifest. */
+function saveLook(manifestPath: string, look: UserScenarioConfig) {
+  const manifest: RecordingManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  delete manifest.renderConfig;
+  const { version, createdAt, config, ...rest } = manifest;
+  // Next to `config`, where someone editing the manifest sees what overrides it.
+  const next = Object.keys(look).length ? { version, createdAt, config, renderConfig: look, ...rest } : manifest;
+  writeFileSync(`${manifestPath}.tmp`, JSON.stringify(next, null, 2));
+  renameSync(`${manifestPath}.tmp`, manifestPath);
 }
 
 async function openCompositorPage(browser: Browser, dir: string, setup: Record<string, unknown>) {

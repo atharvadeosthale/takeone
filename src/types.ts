@@ -273,6 +273,8 @@ export interface RecordingManifest {
   version: 1;
   createdAt: string;
   config: ScenarioConfig;
+  /** Look overrides saved by earlier renders. Every render applies them on top of `config`. */
+  renderConfig?: UserScenarioConfig;
   /** CSS viewport size the page was rendered at. */
   viewport: ViewportConfig;
   /** Actual pixel size of the captured frames. */

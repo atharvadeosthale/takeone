@@ -176,7 +176,7 @@ Read credentials from environment variables. Never write them into the file.
 
 - **Zoom for the viewer, not for every click.** Automatic zoom already follows clicks and typing, and `zoom.auto` controls it. Add an explicit `zoom` when the viewer needs to read something: a result, a status, a value that changed. Hold it for about 1.5 s, then `zoom-out` before the cursor travels far. Two to four deliberate zooms per minute reads better than constant motion. To turn automatic zoom off for a section, call `s.autoZoom(false)`.
 - **Show slow steps honestly.** A wait plays in real time by default. `s.lapse(8, () => …)` shows a long wait as a time-lapse; `s.trim(() => …)` cuts it down.
-- **Capture crisp.** The default is a 1920x1080 viewport at `deviceScaleFactor: 2`, which keeps zooms sharp. Output size is set separately (`output.width`, `output.height`, `output.fps`); for 4K output, capture at `deviceScaleFactor: 3`. Restyle an existing take without recording again: `takeone render <recording-dir>` with other `frame`, `cursor` or `output` settings.
+- **Capture crisp.** The default is a 1920x1080 viewport at `deviceScaleFactor: 2`, which keeps zooms sharp. Output size is set separately (`output.width`, `output.height`, `output.fps`); for 4K output, capture at `deviceScaleFactor: 3`. Restyle an existing take without recording again: `takeone render <recording-dir>` with other `frame`, `cursor` or `output` settings. The take keeps that look for later renders; `--reset-look` goes back to the recorded one.
 - **Prefer short takes.** Several short scenarios are easier to get right than one long one. `record --no-render` followed by `render` separates capturing from styling.
 
 ## Things that cost time if you don't know them
