@@ -62,9 +62,11 @@ export async function recordScenario(scenario: Scenario, opts: RecordOptions): P
   const duration = Date.now() - started;
   await launched.close();
 
-  // Trim frames that fall outside recording segments (pre-roll setup).
+  // Trim frames that fall outside recording segments (pre-roll setup), but keep the frame on
+  // screen as each segment starts: a page that is not repainting sends no new one.
   const segments = recordingSegments(session.events, duration);
-  const kept = frames.filter((f) => segments.some(([a, b]) => f.t >= a - 100 && f.t <= b + 100));
+  const opening = segments.map(([a]) => frames.filter((f) => f.t <= a).pop());
+  const kept = frames.filter((f) => opening.includes(f) || segments.some(([a, b]) => f.t >= a - 100 && f.t <= b + 100));
   for (const f of frames) if (!kept.includes(f)) safeUnlink(join(framesDir, f.file));
 
   const manifest: RecordingManifest = {

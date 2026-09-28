@@ -15,6 +15,8 @@ export class FrameCapture {
   private origin = 0;
   private active = false;
   private writing = true;
+  /** The newest frame that arrived while not writing: what is on screen when writing resumes. */
+  private held: { data: string; t: number } | null = null;
   private pending: Promise<void>[] = [];
   frameSize: { width: number; height: number } | null = null;
 
@@ -50,6 +52,10 @@ export class FrameCapture {
 
   /** Skip writing frames to disk (used while recording is paused). */
   setWriting(on: boolean) {
+    // A page that changed while paused may not repaint again for a while, so write the frame
+    // on screen now rather than leave the last one from before the pause in its place.
+    if (on && !this.writing && this.held) this.write(this.held.data, this.held.t);
+    this.held = null;
     this.writing = on;
   }
 
@@ -57,8 +63,12 @@ export class FrameCapture {
     const t = (ev.metadata.timestamp ?? Date.now() / 1000) * 1000 - this.origin;
     // Ack immediately so Chrome keeps producing frames.
     this.cdp.send("Page.screencastFrameAck", { sessionId: ev.sessionId }).catch(() => {});
-    if (!this.writing) return;
-    const buf = Buffer.from(ev.data, "base64");
+    if (this.writing) this.write(ev.data, t);
+    else this.held = { data: ev.data, t };
+  }
+
+  private write(data: string, t: number) {
+    const buf = Buffer.from(data, "base64");
     if (!this.frameSize) this.frameSize = readImageSize(buf, this.cfg.format);
     const file = `f${String(this.index++).padStart(6, "0")}.${this.cfg.format === "jpeg" ? "jpg" : "png"}`;
     this.frames.push({ t: Math.round(t), file });
