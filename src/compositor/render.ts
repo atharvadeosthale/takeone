@@ -192,7 +192,9 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
 
   let contactSheet: string | undefined;
   if (opts.contactSheet !== false) {
-    contactSheet = join(dirname(outFile), "output-keyframes.jpg");
+    // Named after the video (output.mp4 -> output-keyframes.jpg), so a render to another file keeps
+    // the earlier sheet.
+    contactSheet = `${outFile.replace(/\.[^./\\]+$/, "")}-keyframes.jpg`;
     const secs = outDuration / 1000;
     const every = Math.max(1, Math.round(secs / 12));
     const tiles = Math.max(1, Math.ceil(secs / every));
@@ -200,7 +202,11 @@ export async function renderRecording(opts: RenderOptions): Promise<RenderResult
     await runFfmpeg([
       "-i", outFile, "-vf", `fps=1/${every},scale=480:-1,tile=${cols}x${Math.ceil(tiles / cols)}`,
       "-frames:v", "1", "-q:v", "4", contactSheet,
-    ]).catch((e) => log(`Keyframe sheet failed: ${e.message}`));
+    ]).catch((e) => {
+      log(`Keyframe sheet failed: ${e.message}`);
+      // A sheet at that path is from an earlier render, not this video.
+      contactSheet = undefined;
+    });
   }
   return { outFile, contactSheet, durationMs: outDuration, frames: totalFrames };
 }
