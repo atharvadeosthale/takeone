@@ -15,9 +15,9 @@ export interface KeptRange {
 }
 
 /**
- * Source-time windows a cut must not touch: the full span of every camera animation,
- * plus a small settling margin on each side. Cutting inside one of these would jump the
- * camera mid-move and read as a broken zoom.
+ * Source-time windows a cut must not touch, and a time-lapse must not speed up: the full
+ * span of every camera animation, plus a small settling margin on each side. Cutting inside
+ * one of these would jump the camera mid-move and read as a broken zoom.
  */
 export function cameraBusyWindows(keys: CameraKeyframe[], margin = 120): [number, number][] {
   return keys
@@ -53,9 +53,9 @@ function editIdle(ev: { t: number; end: number; edit?: WaitEdit }, cfg: Scenario
 
   if (mode === "keep") return [{ srcStart: ev.t, srcEnd: ev.end, rate: 1 }];
   if (typeof mode === "number" && mode > 1) {
-    // Time-lapse: the whole wait is shown, compressed. It also makes any camera move
-    // inside the wait play at the same rate, so the zoom stays smooth rather than jumpy.
-    return [{ srcStart: ev.t, srcEnd: ev.end, rate: mode }];
+    // Time-lapse: the whole wait is shown, compressed. Camera moves inside it still play in
+    // real time, so a zoom reads as a zoom rather than a snap.
+    return realTimeSpans(ev, protect, mode);
   }
 
   // Trim: keep the opening, and keep any camera work that happens during the wait, but
@@ -65,9 +65,17 @@ function editIdle(ev: { t: number; end: number; edit?: WaitEdit }, cfg: Scenario
   if (len <= cfg.idleTrim.threshold) return [{ srcStart: ev.t, srcEnd: ev.end, rate: 1 }];
 
   // Spans that must survive: the opening build-up, plus every camera move in the wait.
+  const opening: [number, number][] = cfg.idleTrim.keep > 0 ? [[ev.t, ev.t + cfg.idleTrim.keep]] : [];
+  return realTimeSpans(ev, [...opening, ...protect], Infinity);
+}
+
+/**
+ * Split a wait into pieces: the parts inside `spans` play in real time, and the rest plays
+ * at `rate`. An infinite rate drops the rest.
+ */
+function realTimeSpans(ev: { t: number; end: number }, spans: [number, number][], rate: number): Piece[] {
   const keepSpans: [number, number][] = [];
-  if (cfg.idleTrim.keep > 0) keepSpans.push([ev.t, Math.min(ev.t + cfg.idleTrim.keep, ev.end)]);
-  for (const [w0, w1] of protect) {
+  for (const [w0, w1] of spans) {
     const a = Math.max(w0, ev.t);
     const b = Math.min(w1, ev.end);
     if (b > a) keepSpans.push([a, b]);
@@ -84,11 +92,11 @@ function editIdle(ev: { t: number; end: number; edit?: WaitEdit }, cfg: Scenario
   const pieces: Piece[] = [];
   let cursor = ev.t;
   for (const [a, b] of merged) {
-    if (a > cursor) pieces.push({ srcStart: cursor, srcEnd: a, rate: Infinity });
+    if (a > cursor) pieces.push({ srcStart: cursor, srcEnd: a, rate });
     pieces.push({ srcStart: a, srcEnd: b, rate: 1 });
     cursor = b;
   }
-  if (cursor < ev.end) pieces.push({ srcStart: cursor, srcEnd: ev.end, rate: Infinity });
+  if (cursor < ev.end) pieces.push({ srcStart: cursor, srcEnd: ev.end, rate });
   return pieces;
 }
 
@@ -97,7 +105,8 @@ function editIdle(ev: { t: number; end: number; edit?: WaitEdit }, cfg: Scenario
  *
  * Recording segments are split by every wait's edit mode. Cuts never begin inside a camera
  * animation: when a wait and a zoom overlap, the wait plays through the zoom whole and only
- * the remainder is trimmed. Time-lapse waits replay at their own rate instead of jumping.
+ * the remainder is trimmed. Time-lapse waits replay at their own rate instead of jumping,
+ * and slow down to real time for any zoom inside them.
  */
 export function buildTimeline(
   manifest: RecordingManifest,
@@ -170,6 +179,7 @@ export function outToSource(ranges: KeptRange[], tOut: number): number {
  * Two adjacent ranges are not a cut: when range A ends exactly where range B starts, source
  * time flows continuously across the boundary and the output is identical to one range. Only
  * a genuine gap means a jump, so this compares source continuity rather than range indices.
+ * A time-lapse is not a cut either: source time runs faster there, but it never jumps.
  */
 export function crossesCut(ranges: KeptRange[], srcA: number, srcB: number): boolean {
   if (srcB <= srcA) return false;
@@ -179,8 +189,7 @@ export function crossesCut(ranges: KeptRange[], srcA: number, srcB: number): boo
     // A gap in source time between consecutive kept ranges is a real cut.
     if (covering[i].srcStart > covering[i - 1].srcEnd + 0.5) return true;
   }
-  // A rate change is also a discontinuity in how source time advances.
-  return covering.some((r) => r.rate !== 1);
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,12 +222,21 @@ export function planCamera(manifest: RecordingManifest, cfg: ScenarioConfig): Ca
   let segmentStart = 0;
   // Current auto zoom, if any
   let autoActive: { target: CameraTarget; lastInteraction: number } | null = null;
+  // Ease-out of the last auto zoom, until a newer zoom is planned
+  let pendingOut: CameraKeyframe | null = null;
   const LEAD = z.autoLead;
 
   const closeAuto = () => {
     if (!autoActive) return;
-    keys.push({ t: autoActive.lastInteraction + z.autoHold, target: FULL(vw, vh), duration: z.duration, easing: z.easing, follow: false });
+    pendingOut = { t: autoActive.lastInteraction + z.autoHold, target: FULL(vw, vh), duration: z.duration, easing: z.easing, follow: false };
+    keys.push(pendingOut);
     autoActive = null;
+  };
+  // A zoom starting no later than the pending ease-out replaces it, so the camera moves straight on.
+  const zoomTo = (key: CameraKeyframe) => {
+    if (pendingOut && key.t <= pendingOut.t) keys.splice(keys.indexOf(pendingOut), 1);
+    pendingOut = null;
+    keys.push(key);
   };
 
   for (const ev of events) {
@@ -231,7 +249,7 @@ export function planCamera(manifest: RecordingManifest, cfg: ScenarioConfig): Ca
         else autoActive = null;
       }
       manualActive = true;
-      keys.push({ t: ev.t, target: ev.target, duration: ev.duration, easing: ev.easing, follow: ev.follow ?? z.followCursor });
+      zoomTo({ t: ev.t, target: ev.target, duration: ev.duration, easing: ev.easing, follow: ev.follow ?? z.followCursor });
       continue;
     }
     if (ev.type === "zoomOut") {
@@ -271,7 +289,7 @@ export function planCamera(manifest: RecordingManifest, cfg: ScenarioConfig): Ca
       }
     }
     autoActive = { target: { cx: p.x, cy: p.y, scale: z.autoScale }, lastInteraction: ev.t };
-    keys.push({ t: Math.max(segmentStart, ev.t - LEAD), target: autoActive.target, duration: z.duration, easing: z.easing, follow: z.followCursor });
+    zoomTo({ t: Math.max(segmentStart, ev.t - LEAD), target: autoActive.target, duration: z.duration, easing: z.easing, follow: z.followCursor });
   }
   closeAuto();
   keys.sort((a, b) => a.t - b.t);

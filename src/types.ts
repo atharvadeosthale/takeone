@@ -129,8 +129,8 @@ export interface IdleTrimConfig {
   /** What an idle stretch is shortened to, in ms. Default 600. */
   keep: number;
   /**
-   * Never cut inside a camera animation. A cut that overlaps a zoom would otherwise jump
-   * the camera mid-move, which reads as a broken zoom. Default true.
+   * Never cut inside a camera animation, or speed one up in a time-lapse. A cut that overlaps
+   * a zoom would otherwise jump the camera mid-move, which reads as a broken zoom. Default true.
    */
   protectCamera: boolean;
 }

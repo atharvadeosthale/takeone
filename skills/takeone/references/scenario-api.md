@@ -100,7 +100,7 @@ await s.trim(() => s.waitFor({ text: "Deployed" }));         // cut down to idle
 await s.waitFor({ text: "Deployed" }, { edit: "trim" });     // the same, as an option
 ```
 
-A cut never lands inside a zoom: the wait plays through the camera move, and only the dead time around it is dropped.
+A cut never lands inside a zoom: the wait plays through the camera move, and only the dead time around it is dropped. A time-lapse also slows to normal speed for a zoom.
 
 ## Config
 

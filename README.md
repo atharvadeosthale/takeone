@@ -140,7 +140,7 @@ defineScenario({
 
 A recording keeps its raw frames, so `npx takeone render recordings/demo-<time>` renders it again with a different background, cursor or size. Nothing is recorded again.
 
-Waits play in real time by default, because a 20 second deploy is part of the story. `s.lapse(8, () => …)` shows a long wait as a time-lapse. `s.trim(() => …)` cuts it short. A cut never lands in the middle of a zoom.
+Waits play in real time by default, because a 20 second deploy is part of the story. `s.lapse(8, () => …)` shows a long wait as a time-lapse. `s.trim(() => …)` cuts it short. A cut never lands in the middle of a zoom, and a time-lapse plays zooms at normal speed.
 
 ## Logged-in apps
 
